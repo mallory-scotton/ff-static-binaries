@@ -5,6 +5,9 @@ on:
     tags:
       - "v*"
 
+permissions:
+  contents: write
+
 jobs:
   build-linux:
     runs-on: ubuntu-22.04
@@ -22,11 +25,11 @@ jobs:
             build-essential pkg-config yasm nasm git curl \
             gcc g++ make \
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
-            gcc-i686-linux-gnu g++-i686-linux-gnu
+            gcc-i686-linux-gnu g++-i686-linux-gnu zip
 
       - name: Build FFmpeg (${{ matrix.arch }})
         run: |
-          git clone --depth 1 --branch n7.0.2 https://git.ffmpeg.org/ffmpeg.git ffmpeg
+          git clone --depth 1 --branch n${GITHUB_REF#refs/tags/v} https://git.ffmpeg.org/ffmpeg.git ffmpeg
           cd ffmpeg
           case ${{ matrix.arch }} in
             x86_64)
@@ -55,12 +58,14 @@ jobs:
           esac
           make -j$(nproc)
           make install
+          cd ..
+          zip -r ffmpeg-linux-${{ matrix.arch }}.zip build/bin
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ffmpeg-linux-${{ matrix.arch }}
-          path: build/bin/*
+          path: ffmpeg-linux-${{ matrix.arch }}.zip
 
   build-macos:
     runs-on: macos-latest
@@ -68,25 +73,29 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
-        run: brew install nasm pkg-config yasm
+        run: brew install nasm pkg-config yasm zip
 
       - name: Build FFmpeg (macOS)
         run: |
-          git clone --depth 1 --branch n7.0.2 https://git.ffmpeg.org/ffmpeg.git ffmpeg
+          git clone --depth 1 --branch n${GITHUB_REF#refs/tags/v} https://git.ffmpeg.org/ffmpeg.git ffmpeg
           cd ffmpeg
           ./configure \
             --prefix=$PWD/../build \
-            --arch=x86_64 --target-os=darwin \
+            --arch=x86_64 \
+            --target-os=darwin \
             --enable-static --disable-shared \
-            --disable-doc --disable-debug
+            --disable-doc --disable-debug \
+            --disable-x86asm
           make -j$(sysctl -n hw.ncpu)
           make install
+          cd ..
+          zip -r ffmpeg-macos.zip build/bin
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ffmpeg-macos
-          path: build/bin/*
+          path: ffmpeg-macos.zip
 
   build-windows:
     runs-on: windows-latest
@@ -104,7 +113,7 @@ jobs:
       - name: Build FFmpeg (Windows)
         shell: msys2 {0}
         run: |
-          git clone --depth 1 --branch n7.0.2 https://git.ffmpeg.org/ffmpeg.git ffmpeg
+          git clone --depth 1 --branch n${GITHUB_REF#refs/tags/v} https://git.ffmpeg.org/ffmpeg.git ffmpeg
           cd ffmpeg
           ./configure \
             --prefix=$PWD/../build \
@@ -114,12 +123,14 @@ jobs:
             --disable-doc --disable-debug
           make -j$(nproc)
           make install
+          cd ..
+          zip -r ffmpeg-windows.zip build/bin
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ffmpeg-windows
-          path: build/bin/*
+          path: ffmpeg-windows.zip
 
   release:
     runs-on: ubuntu-22.04
@@ -138,4 +149,10 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/**/*
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          files: |
+            artifacts/**/*.zip
+            artifacts/SHA256SUMS.txt
