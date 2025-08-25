@@ -1,0 +1,105 @@
+name: Build FFmpeg Binaries
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    name: Build FFmpeg (${{ matrix.os }} - ${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: amd64
+          - os: ubuntu-latest
+            arch: arm64
+          - os: ubuntu-latest
+            arch: i686
+          - os: windows-latest
+            arch: amd64
+          - os: macos-latest
+            arch: amd64
+          - os: macos-latest
+            arch: arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git build-essential pkg-config yasm nasm \
+            gcc-multilib g++-multilib \
+            crossbuild-essential-arm64 crossbuild-essential-i386
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew update
+          brew install pkg-config yasm nasm
+
+      - name: Install dependencies (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          choco install -y git nasm
+          echo "PATH=C:\\Program Files\\NASM;%PATH%" >> $env:GITHUB_ENV
+
+      - name: Clone FFmpeg
+        run: git clone --depth 1 --branch n7.0.2 https://git.ffmpeg.org/ffmpeg.git ffmpeg
+
+      - name: Configure FFmpeg
+        working-directory: ffmpeg
+        run: |
+          ./configure \
+            --prefix=$PWD/../build \
+            --enable-static \
+            --disable-shared \
+            --disable-doc \
+            --disable-debug
+
+      - name: Build FFmpeg
+        working-directory: ffmpeg
+        run: |
+          make -j$(nproc || sysctl -n hw.ncpu || echo 4)
+          make install
+
+      - name: Package Binary
+        run: |
+          mkdir -p release
+          cp build/bin/* release/
+          cd release
+          zip -r ffmpeg-${{ matrix.os }}-${{ matrix.arch }}.zip *
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-${{ matrix.os }}-${{ matrix.arch }}
+          path: release/*.zip
+
+  release:
+    name: Publish Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          find . -type f -name "*.zip" -exec sha256sum {} \; > SHA256SUMS.txt
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/**/*.zip
+            artifacts/SHA256SUMS.txt
